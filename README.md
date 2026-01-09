@@ -3,7 +3,7 @@
 This package contains two folders:
 
 - `platform/` : local Git + PR UI (Gitea), CI (Woodpecker), reverse proxy (Traefik), and a webhook-based preview cleaner
-- `app/`      : a tiny classic PHP + MySQL app repo configured to build & deploy a preview environment per PR
+- `php_mysql_demo_app/` : a tiny classic PHP + MySQL app repo configured to build & deploy a preview environment per PR
 
 URLs (no hosts file edits required):
 - Gitea:     http://gitea.localhost
@@ -110,7 +110,7 @@ Verify SSH authentication:
 From this package root:
 
 ```bash
-cd app
+cd php_mysql_demo_app
 git init
 git add .
 git commit -m "Initial commit: php preview demo"
