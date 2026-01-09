@@ -4,7 +4,7 @@ $db   = getenv('DB_NAME') ?: 'app';
 $user = getenv('DB_USER') ?: 'app';
 $pass = getenv('DB_PASS') ?: 'app';
 
-echo "<h1>Preview Environment OK</h1>";
+echo "<h1>Preview Environment OK.</h1>";
 
 try {
     $pdo = new PDO("mysql:host=$host;dbname=$db;charset=utf8mb4", $user, $pass, [

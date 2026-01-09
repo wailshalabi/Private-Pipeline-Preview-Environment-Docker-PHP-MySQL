@@ -1,28 +1,117 @@
-# Woodpecker CI pipeline
-# Triggers on Pull Requests. It builds an image tagged with the PR number + commit SHA
-# then deploys/updates the preview environment via docker compose.
+# .woodpecker.yml
+# Local PR preview environments for the demo PHP+MySQL app (Gitea + Woodpecker + Traefik)
+#
+# IMPORTANT (Woodpecker v3+):
+# - Use CI_PIPELINE_EVENT (not CI_EVENT)
+# - PR number is CI_COMMIT_PULL_REQUEST (not CI_PULL_REQUEST)
 
 when:
-  event: [pull_request]
+  event: [ pull_request, pull_request_closed, manual ]
+
+# Clone via Docker-internal URL (containers can resolve "gitea", but NOT "gitea.localhost")
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      remote: "http://gitea:3000/${CI_REPO}.git"
+      branch: "${CI_COMMIT_BRANCH}"
+      sha: "${CI_COMMIT_SHA}"
+      partial: true
 
 steps:
-  build_image:
-    image: docker:27-cli
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+  debug:
+    image: alpine:3.20
     commands:
-      - echo "Building image for PR ${CI_PULL_REQUEST} @ ${CI_COMMIT_SHA}"
-      - docker build -t "php-preview:pr-${CI_PULL_REQUEST}-${CI_COMMIT_SHA}" .
+      - echo "CI_PIPELINE_EVENT=${CI_PIPELINE_EVENT}"
+      - echo "CI_REPO=${CI_REPO}"
+      - echo "CI_COMMIT_BRANCH=${CI_COMMIT_BRANCH}"
+      - echo "CI_COMMIT_SHA=${CI_COMMIT_SHA}"
+      - echo "CI_COMMIT_PULL_REQUEST=${CI_COMMIT_PULL_REQUEST}"
 
-  deploy_preview:
+  build-image:
     image: docker:27-cli
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DOCKER_HOST: tcp://host.docker.internal:2375
     commands:
-      - export PR_NUMBER="${CI_PULL_REQUEST}"
-      - export APP_IMAGE="php-preview:pr-${CI_PULL_REQUEST}-${CI_COMMIT_SHA}"
-      - echo "Deploying preview pr-${PR_NUMBER} -> ${APP_IMAGE}"
-      - docker compose -f compose.preview.yml -p "pr-${PR_NUMBER}" up -d
-      - echo ""
-      - echo "Preview URL:  http://pr-${PR_NUMBER}.localhost"
-      - echo "Adminer URL:  http://pr-${PR_NUMBER}-db.localhost"
+      - |
+        set -eu
+        SHORT_SHA="$(echo "$CI_COMMIT_SHA" | cut -c1-7)"
+        IMAGE="php-preview-demo:$SHORT_SHA"
+        echo "Building image: $IMAGE"
+        docker build -t "$IMAGE" .
+        echo "$IMAGE" > image.txt
+
+  envdump:
+    image: alpine:3.20
+    commands:
+      - env | sort | sed -n 's/^\(CI_[A-Z0-9_]*\)=.*/\1/p'
+      - echo "CI_PIPELINE_EVENT=$CI_PIPELINE_EVENT"
+      - echo "CI_PIPELINE_FORGE_URL=$CI_PIPELINE_FORGE_URL"
+      - echo "CI_COMMIT_PULL_REQUEST=$CI_COMMIT_PULL_REQUEST"
+
+  deploy-preview:
+    image: docker:27-cli
+    when:
+      event: [ pull_request ]
+    environment:
+      DOCKER_HOST: tcp://host.docker.internal:2375
+    commands:
+      - |
+        set -eu
+        apk add --no-cache bash
+
+        echo "Event: $CI_PIPELINE_EVENT"
+
+        PR="${CI_COMMIT_PULL_REQUEST:-}"
+
+        # Fallback: parse PR number from the forge URL (Gitea usually contains /pulls/<id>)
+        if [ -z "$PR" ] && [ -n "${CI_PIPELINE_FORGE_URL:-}" ]; then
+          PR="$(echo "$CI_PIPELINE_FORGE_URL" | sed -nE 's#.*/pulls/([0-9]+).*#\1#p')"
+        fi
+
+        if [ -z "$PR" ]; then
+          echo "ERROR: Could not determine PR number."
+          echo "CI_COMMIT_PULL_REQUEST='$CI_COMMIT_PULL_REQUEST'"
+          echo "CI_PIPELINE_FORGE_URL='$CI_PIPELINE_FORGE_URL'"
+          exit 1
+        fi
+
+        IMAGE="$(cat image.txt)"
+        echo "Using image: $IMAGE"
+        echo "Deploying PR #$PR"
+
+        chmod +x ./scripts/deploy-preview.sh
+        ./scripts/deploy-preview.sh "$PR" "$IMAGE"
+
+        echo "App:   http://pr-$PR.localhost"
+        echo "DB UI: http://pr-$PR-db.localhost"
+
+  cleanup-preview:
+    image: docker:27-cli
+    when:
+      event: [ pull_request_closed ]
+    environment:
+      DOCKER_HOST: tcp://host.docker.internal:2375
+    commands:
+      - |
+        set -eu
+        apk add --no-cache bash
+
+        echo "Event: $CI_PIPELINE_EVENT"
+
+        PR="${CI_COMMIT_PULL_REQUEST:-}"
+        if [ -z "$PR" ] && [ -n "${CI_PIPELINE_FORGE_URL:-}" ]; then
+          PR="$(echo "$CI_PIPELINE_FORGE_URL" | sed -nE 's#.*/pulls/([0-9]+).*#\1#p')"
+        fi
+
+        if [ -z "$PR" ]; then
+          echo "ERROR: Could not determine PR number on pull_request_closed."
+          echo "CI_COMMIT_PULL_REQUEST='$CI_COMMIT_PULL_REQUEST'"
+          echo "CI_PIPELINE_FORGE_URL='$CI_PIPELINE_FORGE_URL'"
+          exit 1
+        fi
+
+        chmod +x ./scripts/destroy-preview.sh
+        bash ./scripts/destroy-preview.sh "$PR"
+
+        echo "Cleaned preview for PR #$PR"
