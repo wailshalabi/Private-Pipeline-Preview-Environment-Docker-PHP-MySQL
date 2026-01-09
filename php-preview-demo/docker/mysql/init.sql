@@ -3,5 +3,4 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(100) NOT NULL
 );
 
-INSERT INTO users (name) VALUES ('Test User A'), ('Test User B')
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+INSERT INTO users (name) VALUES ('Test User A'), ('Test User B');
