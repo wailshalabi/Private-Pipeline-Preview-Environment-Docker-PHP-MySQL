@@ -1,0 +1,128 @@
+services:
+  traefik:
+    image: traefik:v3.6.1
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --entrypoints.web.address=:80
+
+      # Docker provider via TCP (no WSL socket available)
+      - --providers.docker=true
+      - --providers.docker.endpoint=tcp://host.docker.internal:2375
+      - --providers.docker.exposedbydefault=false
+    ports:
+      - "80:80"
+      - "8080:8080"
+    networks: [edge]
+    extra_hosts:
+      # ensures host.docker.internal resolves to the actual host gateway
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  gitea:
+    image: gitea/gitea:1.22
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+
+      # Web UI (Traefik routes to port 3000 internally)
+      - GITEA__server__DOMAIN=gitea.localhost
+      - GITEA__server__ROOT_URL=http://gitea.localhost/
+      - GITEA__server__HTTP_PORT=3000
+
+      # SSH (Gitea built-in SSH server)
+      - GITEA__server__START_SSH_SERVER=true
+      - GITEA__server__SSH_LISTEN_PORT=2222
+      - GITEA__server__SSH_DOMAIN=gitea.localhost
+      - GITEA__server__SSH_PORT=2222
+
+      # Allow webhooks to call services inside the docker network
+      - GITEA__webhook__ALLOWED_HOST_LIST=woodpecker-server,woodpecker-server:8000,ci.localhost
+      - GITEA__webhook__SKIP_TLS_VERIFY=true
+
+    volumes:
+      - ./data/gitea:/data
+    networks: [edge]
+
+    # Publish ONLY SSH to the host (not the web port)
+    ports:
+      - "2222:2222"
+
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.gitea.rule=Host(`gitea.localhost`)
+      - traefik.http.routers.gitea.entrypoints=web
+      - traefik.http.services.gitea.loadbalancer.server.port=3000
+
+  woodpecker-server:
+    image: woodpeckerci/woodpecker-server:v3.12.0
+    environment:
+      - WOODPECKER_OPEN=true
+      - WOODPECKER_HOST=http://ci.localhost
+      - WOODPECKER_AGENT_SECRET=${WOODPECKER_AGENT_SECRET}
+
+      - WOODPECKER_GITEA=true
+      - WOODPECKER_GITEA_URL=http://gitea.localhost
+      - WOODPECKER_GITEA_CLIENT=${WOODPECKER_GITEA_CLIENT}
+      - WOODPECKER_GITEA_SECRET=${WOODPECKER_GITEA_SECRET}
+      - WOODPECKER_GIT_REMOTE_URL=http://gitea:3000
+
+      - WOODPECKER_GRPC_ADDR=:9000
+    volumes:
+      - woodpecker_data:/var/lib/woodpecker
+    networks: [edge]
+    depends_on: [gitea]
+    extra_hosts:
+      - "gitea.localhost:host-gateway"
+      - "ci.localhost:host-gateway"
+      - "cleaner.localhost:host-gateway"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ci.rule=Host(`ci.localhost`)
+      - traefik.http.routers.ci.entrypoints=web
+      - traefik.http.services.ci.loadbalancer.server.port=8000
+    restart: unless-stopped
+
+  woodpecker-agent:
+    image: woodpeckerci/woodpecker-agent:v3.12.0
+    user: "0:0"
+    environment:
+      - WOODPECKER_SERVER=woodpecker-server:9000
+      - WOODPECKER_AGENT_SECRET=${WOODPECKER_AGENT_SECRET}
+
+      - WOODPECKER_BACKEND=docker
+      - WOODPECKER_BACKEND_DOCKER_NETWORK=edge
+      - DOCKER_HOST=tcp://dockerhost:2375
+
+      - WOODPECKER_MAX_WORKFLOWS=2
+      - WOODPECKER_HEALTHCHECK_ADDR=:3001
+    networks: [edge]
+    depends_on:
+      woodpecker-server:
+        condition: service_started
+    extra_hosts:
+      - "dockerhost:host-gateway"
+    restart: unless-stopped
+
+  preview-cleaner:
+    build: ./preview-cleaner
+    environment:
+      - WEBHOOK_SECRET=${PREVIEW_WEBHOOK_SECRET}
+      - DOCKER_HOST=tcp://host.docker.internal:2375
+    networks: [edge]
+    depends_on: [gitea]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.cleaner.rule=Host(`cleaner.localhost`)
+      - traefik.http.routers.cleaner.entrypoints=web
+      - traefik.http.services.cleaner.loadbalancer.server.port=8081
+    restart: unless-stopped
+
+networks:
+  edge:
+    name: edge
+
+volumes:
+  woodpecker_data:
