@@ -1,0 +1,28 @@
+# Woodpecker CI pipeline
+# Triggers on Pull Requests. It builds an image tagged with the PR number + commit SHA
+# then deploys/updates the preview environment via docker compose.
+
+when:
+  event: [pull_request]
+
+steps:
+  build_image:
+    image: docker:27-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - echo "Building image for PR ${CI_PULL_REQUEST} @ ${CI_COMMIT_SHA}"
+      - docker build -t "php-preview:pr-${CI_PULL_REQUEST}-${CI_COMMIT_SHA}" .
+
+  deploy_preview:
+    image: docker:27-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    commands:
+      - export PR_NUMBER="${CI_PULL_REQUEST}"
+      - export APP_IMAGE="php-preview:pr-${CI_PULL_REQUEST}-${CI_COMMIT_SHA}"
+      - echo "Deploying preview pr-${PR_NUMBER} -> ${APP_IMAGE}"
+      - docker compose -f compose.preview.yml -p "pr-${PR_NUMBER}" up -d
+      - echo ""
+      - echo "Preview URL:  http://pr-${PR_NUMBER}.localhost"
+      - echo "Adminer URL:  http://pr-${PR_NUMBER}-db.localhost"

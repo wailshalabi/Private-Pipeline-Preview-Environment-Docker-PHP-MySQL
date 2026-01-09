@@ -1,0 +1,53 @@
+services:
+  app:
+    image: ${APP_IMAGE}
+    environment:
+      - DB_HOST=db
+      - DB_NAME=app
+      - DB_USER=app
+      - DB_PASS=app
+    depends_on:
+      - db
+    networks:
+      - edge
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`pr-${PR_NUMBER}.localhost`)
+      - traefik.http.routers.app.entrypoints=web
+      - traefik.http.services.app.loadbalancer.server.port=80
+
+  db:
+    image: mysql:8.4
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=app
+      - MYSQL_USER=app
+      - MYSQL_PASSWORD=app
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      - internal
+
+  adminer:
+    image: adminer:4
+    depends_on:
+      - db
+    networks:
+      - edge
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.adminer.rule=Host(`pr-${PR_NUMBER}-db.localhost`)
+      - traefik.http.routers.adminer.entrypoints=web
+      - traefik.http.services.adminer.loadbalancer.server.port=8080
+
+volumes:
+  db_data:
+
+networks:
+  edge:
+    external: true
+  internal:
+    driver: bridge
