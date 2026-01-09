@@ -1,178 +1,303 @@
-# Fully Private PR Preview Environments on a Single Laptop (Docker-only)
+# Fully Private PR Preview Environment
+### Docker · PHP · MySQL · Gitea · Woodpecker · Traefik
 
-This package contains two folders:
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![PHP](https://img.shields.io/badge/PHP-777BB4?logo=php&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-4479A1?logo=mysql&logoColor=white)
+![Gitea](https://img.shields.io/badge/Gitea-609926?logo=gitea&logoColor=white)
+![Woodpecker CI](https://img.shields.io/badge/Woodpecker%20CI-2B2E4A?logo=woodpeckerci&logoColor=white)
+![Traefik](https://img.shields.io/badge/Traefik-24A1C1?logo=traefikproxy&logoColor=white)
 
-- `platform/` : local Git + PR UI (Gitea), CI (Woodpecker), reverse proxy (Traefik), and a webhook-based preview cleaner
-- `php_mysql_demo_app/` : a tiny classic PHP + MySQL app repo configured to build & deploy a preview environment per PR
-
-URLs (no hosts file edits required):
-- Gitea:     http://gitea.localhost
-- CI:        http://ci.localhost
-- Cleaner:   http://cleaner.localhost (optional endpoint)
-- PR preview: http://pr-<number>.localhost
-
-> Why `localhost`?
-> Any `*.localhost` resolves to 127.0.0.1, so the browser works immediately on a single laptop.
 
 ---
 
-## 0) Start the platform stack
+## 1. Project Purpose
+
+This repository demonstrates a **fully private CI/CD preview environment** that runs entirely on a **single developer machine** using Docker.
+
+Each Pull Request automatically:
+
+- Builds a Docker image
+- Creates an isolated application container
+- Creates an isolated MySQL database
+- Initializes the database using `init.sql`
+- Exposes a unique preview URL
+
+When the Pull Request is **merged or closed**, **all related containers, networks, and volumes are deleted automatically**.
+
+This setup mirrors enterprise-grade preview environments (GitLab Review Apps, Vercel previews),
+but works **100% locally**, fully offline, and without any external SaaS services.
+
+---
+
+## 2. Key Features
+
+- Self-hosted Git server (**Gitea**)
+- Self-hosted CI/CD (**Woodpecker**)
+- Reverse proxy & dynamic routing (**Traefik**)
+- One isolated preview environment per Pull Request
+- Automatic database initialization per PR
+- Automatic cleanup on PR close or merge
+- No manual steps after initial setup
+- Designed for private networks and regulated environments
+
+---
+
+## 3. Architecture Overview
+
+```
+Developer → Gitea → Woodpecker CI → Docker Engine
+                                 ↓
+                         Traefik Reverse Proxy
+                                 ↓
+                    PR Preview Environments
+```
+
+Each Pull Request receives:
+
+- One application container
+- One MySQL container
+- A dedicated Docker network
+- Unique Traefik routing (`pr-<number>.localhost`)
+
+---
+
+## 4. Repository Structure
+
+```
+.
+├── platform/
+│   ├── compose.platform.yml
+│   └── preview-cleaner/
+│
+├── php_mysql_demo_app/
+│   ├── Dockerfile
+│   ├── compose.preview.yml
+│   ├── db/
+│   │   └── init/
+│   │       └── init.sql
+│   └── scripts/
+│       ├── deploy-preview.sh
+│       └── destroy-preview.sh
+│
+└── README.md
+```
+
+---
+
+## 5. URLs (No Hosts File Needed)
+
+Thanks to the special `.localhost` domain, all URLs resolve automatically to `127.0.0.1`.
+
+- Gitea:        http://gitea.localhost
+- Woodpecker:   http://ci.localhost
+- Traefik:      http://localhost:8080
+- Cleaner:      http://cleaner.localhost
+- PR Preview:   http://pr-<PR_NUMBER>.localhost
+
+---
+
+## 6. Start the Platform Stack
 
 ```bash
 cd platform
 cp .env.example .env
-# edit .env with random secrets (you will fill OAuth values later)
+# Edit .env and set random secrets (OAuth values will be added later)
 docker compose -f compose.platform.yml up -d --build
 ```
 
-Open:
-- Traefik dashboard: http://localhost:8080
-- Gitea: http://gitea.localhost
+Open Gitea:
+```
+http://gitea.localhost
+```
 
 ---
 
-## 1) Gitea initial setup
+## 7. Gitea Initial Setup
 
 1. Open `http://gitea.localhost`
-2. Complete the initial setup wizard (SQLite default is OK)
-3. Create a user and a repository (call it e.g. `php-preview-demo`)
+2. Complete the setup wizard (SQLite default is fine)
+3. Create a user
+4. Create a repository (e.g. `php-preview-demo`)
 
 ---
 
-## 2) Create a Gitea OAuth app for Woodpecker
+## 8. Configure OAuth (Gitea → Woodpecker)
 
 In Gitea:
-- User menu (top right) -> **Settings** -> **Applications**
-- **Create a new OAuth2 Application**
-  - Name: `woodpecker`
-  - Redirect URI: `http://ci.localhost/authorize`
 
-Copy:
-- Client ID
-- Client Secret
+- User Settings → Applications
+- Create a new OAuth2 application
 
-Put them into `platform/.env`:
-- `WOODPECKER_GITEA_CLIENT=...`
-- `WOODPECKER_GITEA_SECRET=...`
+Settings:
 
-Restart Woodpecker server:
+- Name: `woodpecker`
+- Redirect URI: `http://ci.localhost/authorize`
+
+Copy the **Client ID** and **Client Secret** into:
+
+```
+platform/.env
+WOODPECKER_GITEA_CLIENT=...
+WOODPECKER_GITEA_SECRET=...
+```
+
+Restart the platform:
+
 ```bash
-cd platform
 docker compose -f compose.platform.yml up -d
 ```
 
-Now open Woodpecker:
-- http://ci.localhost
-- Login via Gitea
+Login to Woodpecker:
+```
+http://ci.localhost
+```
 
-Enable the `php-preview-demo` repo in Woodpecker.
+Enable your repository.
 
 ---
 
-## 3) Push the sample app repo to Gitea
+## 9. Push the Demo Application
 
-### Create an SSH key on Windows (Git Bash) and this will create a file (~/.ssh/id_ed25519)
+### Generate SSH Key (Windows / Git Bash)
 
-  ssh-keygen -t ed25519 -C "dev@local"
-  cat ~/.ssh/id_ed25519.pub
+```bash
+ssh-keygen -t ed25519 -C "dev@local"
+cat ~/.ssh/id_ed25519.pub
+```
 
-### Add your public key to Gitea
+### Add SSH Key to Gitea
 
-In the Gitea web UI:
+- User Settings → SSH Keys → Add Key
+- Paste your public key
 
-  -Open http://gitea.localhost/
-  -Log in
-  -Go to User Settings → SSH Keys
-  -Click Add Key
-  -Paste your public key (id_ed25519.pub)
-  -Save
+### Fix SSH Resolution on Windows
 
+Create file:
 
-### Fix SSH hostname resolution for Git Bash (important)
+```
+~/.ssh/config
+```
 
-inside the folder ssh you need to create a config file in order to fix the SSH resolution if windows is not able to resolve it for SSH command line.
+Content:
 
-Edit the file and write the text C:\Users\<YOUR_USER>\.ssh\config (or ~/.ssh/config in Git Bash)
+```
+Host gitea.localhost
+  HostName 127.0.0.1
+  User git
+  Port 2222
+```
 
-  Host gitea.localhost
-    HostName 127.0.0.1
-    User git
-    Port 2222
+Permissions:
 
-Set permissions (Git Bash):
+```bash
+chmod 600 ~/.ssh/config
+```
 
-  chmod 600 ~/.ssh/config
+Verify:
 
-Verify SSH authentication:
+```bash
+ssh -v -p 2222 git@gitea.localhost
+```
 
-  ssh -v -p 2222 git@gitea.localhost
-
-From this package root:
+### Push Repository
 
 ```bash
 cd php_mysql_demo_app
 git init
 git add .
-git commit -m "Initial commit: php preview demo"
+git commit -m "Initial commit"
 git branch -M main
-
-# add your local gitea remote (create the repo first in the UI)
-git remote add origin http://gitea.localhost/<YOUR_USER>/php-preview-demo.git
+git remote add origin http://gitea.localhost/<USER>/php-preview-demo.git
 git push -u origin main
 ```
 
 ---
 
-## 4) Create a webhook to auto-clean previews on PR close/merge
+## 10. Preview Cleaner (Auto Cleanup)
 
-We use a tiny service called `preview-cleaner` that removes containers/volumes by docker-compose project label.
-It does not need the repo checked out.
+A small webhook service (`preview-cleaner`) removes preview stacks on PR close or merge.
 
-In Gitea repo settings:
-- Repository -> **Settings** -> **Webhooks** -> **Add Webhook** -> **Gitea**
-- Target URL: `http://cleaner.localhost/`  (just root path, it accepts POST)
-- Secret: use the same value as `PREVIEW_WEBHOOK_SECRET` in `platform/.env`
-- Trigger events: **Pull Request**
-- Save
+In Gitea repository settings:
 
-> When PR is closed (merged counts as closed), Gitea sends action=closed and the cleaner deletes `pr-<number>` stack.
+- Webhooks → Add Webhook → Gitea
+- Target URL: `http://cleaner.localhost/`
+- Secret: same value as `PREVIEW_WEBHOOK_SECRET` in `.env`
+- Trigger: **Pull Request events**
+
+When a PR is closed, the cleaner removes:
+
+- Containers
+- Networks
+- Volumes
 
 ---
 
-## 5) Use it: PR -> Preview URL
+## 11. CI/CD Pipeline Flow
 
-1. Create a feature branch:
-```bash
-git checkout -b feature/demo
-# edit app/app/index.php or anything
-git commit -am "Change demo"
-git push -u origin feature/demo
+### Pull Request Opened
+
+1. Developer opens a PR in Gitea
+2. Webhook triggers Woodpecker
+3. `pull_request` pipeline starts
+
+### Build
+
+- Docker image built
+- Tagged with commit SHA
+
+### Deploy Preview
+
+- Docker Compose project: `pr-<PR_NUMBER>`
+- App + DB containers created
+- Database initialized via `init.sql`
+- Traefik routes traffic automatically
+
+Preview URLs:
+
+```
+http://pr-<PR_NUMBER>.localhost
+http://pr-<PR_NUMBER>-db.localhost
 ```
 
-2. Open a Pull Request in Gitea.
-3. Woodpecker runs automatically (pull_request event).
-4. When pipeline finishes, open:
-- `http://pr-<PR_NUMBER>.localhost`
-- `http://pr-<PR_NUMBER>-db.localhost`
+### Pull Request Closed / Merged
+
+- Gitea webhook triggers cleaner
+- Preview stack destroyed completely
+- No leftovers remain
 
 ---
 
-## 6) Close/Merge PR -> environment deleted
+## 12. Why This Matters
 
-- Merge PR (or close it)
-- Gitea webhook calls the cleaner
-- Cleaner removes:
-  - containers
-  - networks
-  - volumes (database data too)
+This project demonstrates:
+
+- Real CI/CD automation
+- Production-like workflows
+- Infrastructure as Code
+- Safe feature testing
+- Zero manual environment management
+
+It can scale to:
+
+- Dedicated servers
+- Private cloud
+- Kubernetes-based preview environments
 
 ---
 
-## Notes / Limits (honest)
+## 13. Status
 
-- Woodpecker reliably triggers on PR open/update. Cleanup on merge/close is handled by the webhook cleaner
-  to avoid depending on CI event support for PR-closed.
-- This is intentionally laptop-simple (HTTP only). In private cloud you’d add:
-  - wildcard DNS
-  - TLS
-  - access control
+✔ PR creation works  
+✔ Preview environments created  
+✔ Database initialized  
+✔ Cleanup on merge/close works  
+✔ Fully automated  
+
+---
+
+## 14. Notes / Limits
+
+- HTTP only (no TLS) for laptop simplicity
+- Cleanup handled via webhook for reliability
+- Designed for learning, demos, and private environments
