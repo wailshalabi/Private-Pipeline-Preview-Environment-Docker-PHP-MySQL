@@ -300,4 +300,7 @@ It can scale to:
 
 - HTTP only (no TLS) for laptop simplicity
 - Cleanup handled via webhook for reliability
-- Designed for learning, demos, and private environments
+- Designed for private environments
+
+## 15. Security disclaimer
+This project is for educational purposes only, do not use this implementation directly in production Real systems.
